@@ -1,0 +1,90 @@
+name: Provision Cloud
+
+on:
+  workflow_dispatch:
+    inputs:
+      SUPABASE_PROJECT_REF:
+        description: "20-char Supabase project ref (e.g., abcdefghijklmnopqrst)"
+        required: true
+      APPLY_SCHEMA:
+        description: "Apply supabase/init.sql to remote DB? (yes/no)"
+        required: true
+        default: "no"
+      RUN_VERCEL_DEPLOY:
+        description: "Trigger Vercel deploy after env set? (yes/no)"
+        required: true
+        default: "no"
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # to commit generated types
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Ensure src/types folder
+        run: mkdir -p src/types
+
+      - name: Login to Supabase (token from repo secret)
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          if [ -z "$SUPABASE_ACCESS_TOKEN" ]; then
+            echo "Missing SUPABASE_ACCESS_TOKEN secret."; exit 1;
+          fi
+          npx supabase --version >/dev/null 2>&1 || true
+
+      - name: (Optional) Apply schema to remote
+        if: ${{ github.event.inputs.APPLY_SCHEMA == 'yes' }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          npx supabase db push --project-ref "${{ github.event.inputs.SUPABASE_PROJECT_REF }}" \
+            --db-sql-from-file supabase/init.sql
+
+      - name: Generate Supabase types
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          npx supabase gen types typescript --project-id "${{ github.event.inputs.SUPABASE_PROJECT_REF }}" > src/types/supabase.ts
+          test -s src/types/supabase.ts || (echo "Failed to generate types"; exit 1)
+
+      - name: Commit types
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add src/types/supabase.ts
+          git commit -m "chore: generate Supabase types" || echo "No changes to commit"
+          git push
+
+      # --- Vercel (Optional) ---
+      - name: Set Vercel envs
+        if: ${{ github.event.inputs.RUN_VERCEL_DEPLOY == 'yes' }}
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          if [ -z "$VERCEL_TOKEN" ]; then
+            echo "Missing VERCEL_TOKEN secret."; exit 1;
+          fi
+          npx vercel pull --yes --environment=production --token=$VERCEL_TOKEN
+          # Non-interactive env set (uses .vercel/project.json if linked)
+          printf "%s" "$NEXT_PUBLIC_SUPABASE_URL"       | npx vercel env add NEXT_PUBLIC_SUPABASE_URL production --token=$VERCEL_TOKEN || true
+          printf "%s" "$NEXT_PUBLIC_SUPABASE_ANON_KEY"  | npx vercel env add NEXT_PUBLIC_SUPABASE_ANON_KEY production --token=$VERCEL_TOKEN || true
+          printf "%s" "$SUPABASE_SERVICE_ROLE_KEY"      | npx vercel env add SUPABASE_SERVICE_ROLE_KEY production --token=$VERCEL_TOKEN || true
+
+      - name: Trigger Vercel deploy
+        if: ${{ github.event.inputs.RUN_VERCEL_DEPLOY == 'yes' }}
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          npx vercel --prod --yes --token=$VERCEL_TOKEN
