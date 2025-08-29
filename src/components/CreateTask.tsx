@@ -35,7 +35,7 @@ export default function CreateTask({ onTaskCreated, onClose }: CreateTaskProps) 
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('User not authenticated')
 
-      const { error } = await supabase.from('tasks').insert({
+      const taskData = {
         requester_id: user.id,
         title: formData.title,
         description: formData.description,
@@ -45,7 +45,11 @@ export default function CreateTask({ onTaskCreated, onClose }: CreateTaskProps) 
         budget_min: formData.budget_min ? parseFloat(formData.budget_min) : null,
         budget_max: formData.budget_max ? parseFloat(formData.budget_max) : null,
         deadline: formData.deadline || null
-      })
+      }
+
+      const { error } = await supabase
+        .from('tasks')
+        .insert(taskData as any)
 
       if (error) throw error
 

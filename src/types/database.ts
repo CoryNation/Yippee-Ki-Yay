@@ -61,6 +61,7 @@ export interface Transaction {
   created_at: string
 }
 
+// Supabase database schema type
 export interface Database {
   public: {
     Tables: {
@@ -89,6 +90,15 @@ export interface Database {
         Insert: Omit<Transaction, 'id' | 'created_at'>
         Update: Partial<Omit<Transaction, 'id' | 'created_at'>>
       }
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
+      [_ in never]: never
+    }
+    Enums: {
+      [_ in never]: never
     }
   }
 }
